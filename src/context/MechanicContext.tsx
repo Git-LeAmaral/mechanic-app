@@ -250,7 +250,20 @@ export const MechanicProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const updateCustomer = (id: string, updatedData: Partial<Customer>) => {
+    const before = customers.find((c) => c.id === id);
     const updated = customers.map((c) => (c.id === id ? { ...c, ...updatedData } : c));
+    const after = updated.find((c) => c.id === id);
+
+    console.log('[OS WhatsApp Debug] Cliente atualizado no cadastro:', {
+      customerId: id,
+      antes: before ? { name: before.name, phone: before.phone, whatsapp: before.whatsapp } : null,
+      dadosEnviados: updatedData,
+      depois: after ? { name: after.name, phone: after.phone, whatsapp: after.whatsapp } : null,
+      ordensVinculadas: orders
+        .filter((o) => o.customerId === id)
+        .map((o) => ({ osNumber: o.osNumber, osId: o.id })),
+    });
+
     setCustomers(updated);
     saveState(updated, vehicles, orders);
   };
