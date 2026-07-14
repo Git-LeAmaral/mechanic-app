@@ -1,0 +1,21 @@
+# Postgres local para desenvolvimento.
+# Uso: docker compose up -d
+# Porta 5433 no host para não conflitar com Postgres instalado na 5432.
+# DATABASE_URL=postgresql://mecaflow:mecaflow@localhost:5433/mecaflow?schema=public
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mecaflow-postgres
+    restart: unless-stopped
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: mecaflow
+      POSTGRES_PASSWORD: mecaflow
+      POSTGRES_DB: mecaflow
+    volumes:
+      - mecaflow_pgdata:/var/lib/postgresql/data
+
+volumes:
+  mecaflow_pgdata:

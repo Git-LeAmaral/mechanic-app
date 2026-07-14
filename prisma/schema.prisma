@@ -1,0 +1,196 @@
+// MecaFlow — schema inicial
+// Provider: PostgreSQL (padrão mais portável para produção).
+// Trocar de banco no futuro = mudar `provider` + `url` e gerar migrations novas.
+// Evite SQL raw específico de um vendor no app; preferir Prisma Client.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums — tipagem forte; cada banco mapeia de forma portável via Prisma
+// ---------------------------------------------------------------------------
+
+enum ServiceOrderStatus {
+  BUDGET
+  APPROVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+// ---------------------------------------------------------------------------
+// Clientes
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  document  String // CPF ou CNPJ (armazenar formatado ou só dígitos — app decide)
+  phone     String
+  whatsapp  String   @default("")
+  email     String   @default("")
+  address   String   @default("")
+  /// Extensão sem migration imediata (tags, preferências, origem do lead, etc.)
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vehicles     Vehicle[]
+  serviceOrders ServiceOrder[]
+  appointments Appointment[]
+
+  @@unique([document])
+  @@index([name])
+  @@index([phone])
+  @@index([whatsapp])
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// Veículos
+// ---------------------------------------------------------------------------
+
+model Vehicle {
+  id         String   @id @default(cuid())
+  customerId String
+  plate      String
+  brand      String
+  model      String
+  year       Int
+  color      String   @default("")
+  mileage    Int      @default(0)
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  serviceOrders ServiceOrder[]
+  appointments  Appointment[]
+
+  @@unique([plate])
+  @@index([customerId])
+  @@index([brand, model])
+  @@map("vehicles")
+}
+
+// ---------------------------------------------------------------------------
+// Ordens de Serviço
+// ---------------------------------------------------------------------------
+
+model ServiceOrder {
+  id             String             @id @default(cuid())
+  osNumber       String
+  customerId     String
+  vehicleId      String
+  status         ServiceOrderStatus @default(BUDGET)
+  /// Data civil (use só a parte de data no app; DateTime portável entre bancos)
+  entryDate      DateTime
+  expectedDate   DateTime
+  completionDate DateTime?
+  mileage        Int      @default(0)
+  notes          String   @default("")
+  /// Desconto em BRL — Decimal evita erro de ponto flutuante
+  discount       Decimal  @default(0) @db.Decimal(12, 2)
+  totalAmount    Decimal  @default(0) @db.Decimal(12, 2)
+  metadata       Json?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  customer     Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  vehicle      Vehicle               @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  services     ServiceOrderService[]
+  parts        ServiceOrderPart[]
+  appointments Appointment[]
+
+  @@unique([osNumber])
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([status])
+  @@index([entryDate])
+  @@index([expectedDate])
+  @@map("service_orders")
+}
+
+/// Itens de mão de obra (antes: ServiceItem embutido no JSON do front)
+model ServiceOrderService {
+  id             String   @id @default(cuid())
+  serviceOrderId String
+  description    String
+  unitPrice      Decimal  @default(0) @db.Decimal(12, 2)
+  quantity       Int      @default(1)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+
+  @@index([serviceOrderId])
+  @@map("service_order_services")
+}
+
+/// Peças/componentes da OS
+model ServiceOrderPart {
+  id             String   @id @default(cuid())
+  serviceOrderId String
+  description    String
+  partNumber     String?
+  unitPrice      Decimal  @default(0) @db.Decimal(12, 2)
+  quantity       Int      @default(1)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+
+  @@index([serviceOrderId])
+  @@index([partNumber])
+  @@map("service_order_parts")
+}
+
+// ---------------------------------------------------------------------------
+// Agendamentos (entidade própria — hoje a tela filtra OS por data)
+// Pode existir sem OS; depois virar OS via serviceOrderId.
+// ---------------------------------------------------------------------------
+
+model Appointment {
+  id             String            @id @default(cuid())
+  customerId     String
+  vehicleId      String?
+  serviceOrderId String?
+  status         AppointmentStatus @default(SCHEDULED)
+  /// Início do slot (data + hora)
+  startsAt       DateTime
+  /// Fim opcional do slot
+  endsAt         DateTime?
+  title          String            @default("")
+  notes          String            @default("")
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  vehicle      Vehicle?      @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  serviceOrder ServiceOrder? @relation(fields: [serviceOrderId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([vehicleId])
+  @@index([serviceOrderId])
+  @@index([status])
+  @@index([startsAt])
+  @@map("appointments")
+}

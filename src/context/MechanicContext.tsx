@@ -1,15 +1,21 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Customer, Vehicle, ServiceOrder, OSStatus, ServiceItem, PartItem } from '../types';
+import { Customer, Vehicle, ServiceOrder, ServiceItem, PartItem } from '../types';
+import {
+  createCustomerApi,
+  deleteCustomerApi,
+  fetchCustomers,
+  updateCustomerApi,
+} from '@/lib/api/customers';
 
 interface MechanicContextType {
   customers: Customer[];
   vehicles: Vehicle[];
   orders: ServiceOrder[];
-  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
-  updateCustomer: (id: string, customer: Partial<Customer>) => void;
-  deleteCustomer: (id: string) => void;
+  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Promise<Customer>;
+  updateCustomer: (id: string, customer: Partial<Customer>) => Promise<void>;
+  deleteCustomer: (id: string) => Promise<void>;
   addVehicle: (vehicle: Omit<Vehicle, 'id'>) => Vehicle;
   updateVehicle: (id: string, vehicle: Partial<Vehicle>) => void;
   deleteVehicle: (id: string) => void;
@@ -21,40 +27,7 @@ interface MechanicContextType {
 
 const MechanicContext = createContext<MechanicContextType | undefined>(undefined);
 
-// Initial Mock Data
-const mockCustomers: Customer[] = [
-  {
-    id: 'cust-1',
-    name: 'João Silva',
-    document: '123.456.789-00',
-    phone: '(11) 98765-4321',
-    whatsapp: '(11) 98765-4321',
-    email: 'joao.silva@email.com',
-    address: 'Rua das Flores, 123, São Paulo - SP',
-    createdAt: '2026-05-10T14:30:00Z',
-  },
-  {
-    id: 'cust-2',
-    name: 'Maria Oliveira',
-    document: '987.654.321-11',
-    phone: '(21) 99888-7766',
-    whatsapp: '(21) 99888-7766',
-    email: 'maria.o@email.com',
-    address: 'Av. Atlântica, 456, Rio de Janeiro - RJ',
-    createdAt: '2026-06-01T10:15:00Z',
-  },
-  {
-    id: 'cust-3',
-    name: 'Pedro Santos (Santos Transp.)',
-    document: '12.345.678/0001-99',
-    phone: '(31) 97777-6655',
-    whatsapp: '(31) 97777-6655',
-    email: 'financeiro@santostransp.com.br',
-    address: 'Av. Amazonas, 1420, Belo Horizonte - MG',
-    createdAt: '2026-06-15T09:00:00Z',
-  },
-];
-
+// Initial Mock Data (vehicles/orders ainda no localStorage; clientes vêm da API)
 const mockVehicles: Vehicle[] = [
   {
     id: 'veh-1',
@@ -190,38 +163,43 @@ export const MechanicProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load database from localStorage
+  // Clientes: Postgres via API | Veículos/OS: localStorage (migração gradual)
   useEffect(() => {
-    try {
-      const storedCustomers = localStorage.getItem('mecaflow_customers');
-      const storedVehicles = localStorage.getItem('mecaflow_vehicles');
-      const storedOrders = localStorage.getItem('mecaflow_orders');
+    let cancelled = false;
 
-      if (storedCustomers && storedVehicles && storedOrders) {
-        setCustomers(JSON.parse(storedCustomers));
-        setVehicles(JSON.parse(storedVehicles));
-        setOrders(JSON.parse(storedOrders));
-      } else {
-        // First execution, populate with mock data
-        localStorage.setItem('mecaflow_customers', JSON.stringify(mockCustomers));
-        localStorage.setItem('mecaflow_vehicles', JSON.stringify(mockVehicles));
-        localStorage.setItem('mecaflow_orders', JSON.stringify(mockOrders));
+    const load = async () => {
+      try {
+        const storedVehicles = localStorage.getItem('mecaflow_vehicles');
+        const storedOrders = localStorage.getItem('mecaflow_orders');
 
-        setCustomers(mockCustomers);
-        setVehicles(mockVehicles);
-        setOrders(mockOrders);
+        if (storedVehicles && storedOrders) {
+          setVehicles(JSON.parse(storedVehicles));
+          setOrders(JSON.parse(storedOrders));
+        } else {
+          localStorage.setItem('mecaflow_vehicles', JSON.stringify(mockVehicles));
+          localStorage.setItem('mecaflow_orders', JSON.stringify(mockOrders));
+          setVehicles(mockVehicles);
+          setOrders(mockOrders);
+        }
+
+        const apiCustomers = await fetchCustomers();
+        if (!cancelled) setCustomers(apiCustomers);
+      } catch (e) {
+        console.error('Erro ao carregar dados (API clientes / localStorage):', e);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-    } catch (e) {
-      console.error('Error loading localStorage data:', e);
-    } finally {
-      setIsLoading(false);
-    }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Save to localStorage when state changes
-  const saveState = (updatedCustomers: Customer[], updatedVehicles: Vehicle[], updatedOrders: ServiceOrder[]) => {
+  // Persiste só veículos e OS no localStorage (clientes ficam no banco)
+  const saveLocalState = (updatedVehicles: Vehicle[], updatedOrders: ServiceOrder[]) => {
     try {
-      localStorage.setItem('mecaflow_customers', JSON.stringify(updatedCustomers));
       localStorage.setItem('mecaflow_vehicles', JSON.stringify(updatedVehicles));
       localStorage.setItem('mecaflow_orders', JSON.stringify(updatedOrders));
     } catch (e) {
@@ -236,47 +214,31 @@ export const MechanicProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return Math.max(0, servicesTotal + partsTotal - discount);
   };
 
-  // --- CRUD CUSTOMERS ---
-  const addCustomer = (customerData: Omit<Customer, 'id' | 'createdAt'>) => {
-    const newCustomer: Customer = {
-      ...customerData,
-      id: `cust-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-    };
-    const updated = [...customers, newCustomer];
-    setCustomers(updated);
-    saveState(updated, vehicles, orders);
-    return newCustomer;
+  // --- CRUD CUSTOMERS (Postgres) ---
+  const addCustomer = async (customerData: Omit<Customer, 'id' | 'createdAt'>) => {
+    const created = await createCustomerApi(customerData);
+    setCustomers((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+    return created;
   };
 
-  const updateCustomer = (id: string, updatedData: Partial<Customer>) => {
-    const before = customers.find((c) => c.id === id);
-    const updated = customers.map((c) => (c.id === id ? { ...c, ...updatedData } : c));
-    const after = updated.find((c) => c.id === id);
-
-    console.log('[OS WhatsApp Debug] Cliente atualizado no cadastro:', {
-      customerId: id,
-      antes: before ? { name: before.name, phone: before.phone, whatsapp: before.whatsapp } : null,
-      dadosEnviados: updatedData,
-      depois: after ? { name: after.name, phone: after.phone, whatsapp: after.whatsapp } : null,
-      ordensVinculadas: orders
-        .filter((o) => o.customerId === id)
-        .map((o) => ({ osNumber: o.osNumber, osId: o.id })),
-    });
-
-    setCustomers(updated);
-    saveState(updated, vehicles, orders);
+  const updateCustomer = async (id: string, updatedData: Partial<Customer>) => {
+    const updated = await updateCustomerApi(id, updatedData);
+    setCustomers((prev) =>
+      prev
+        .map((c) => (c.id === id ? updated : c))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    );
   };
 
-  const deleteCustomer = (id: string) => {
-    const updatedCustomers = customers.filter((c) => c.id !== id);
+  const deleteCustomer = async (id: string) => {
+    await deleteCustomerApi(id);
     const updatedVehicles = vehicles.filter((v) => v.customerId !== id);
     const updatedOrders = orders.filter((o) => o.customerId !== id);
 
-    setCustomers(updatedCustomers);
+    setCustomers((prev) => prev.filter((c) => c.id !== id));
     setVehicles(updatedVehicles);
     setOrders(updatedOrders);
-    saveState(updatedCustomers, updatedVehicles, updatedOrders);
+    saveLocalState(updatedVehicles, updatedOrders);
   };
 
   // --- CRUD VEHICLES ---
@@ -287,14 +249,14 @@ export const MechanicProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
     const updated = [...vehicles, newVehicle];
     setVehicles(updated);
-    saveState(customers, updated, orders);
+    saveLocalState(updated, orders);
     return newVehicle;
   };
 
   const updateVehicle = (id: string, updatedData: Partial<Vehicle>) => {
     const updated = vehicles.map((v) => (v.id === id ? { ...v, ...updatedData } : v));
     setVehicles(updated);
-    saveState(customers, updated, orders);
+    saveLocalState(updated, orders);
   };
 
   const deleteVehicle = (id: string) => {
@@ -303,7 +265,7 @@ export const MechanicProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     setVehicles(updatedVehicles);
     setOrders(updatedOrders);
-    saveState(customers, updatedVehicles, updatedOrders);
+    saveLocalState(updatedVehicles, updatedOrders);
   };
 
   // --- CRUD OS ---
@@ -330,7 +292,7 @@ export const MechanicProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const updated = [...orders, newOS];
     setOrders(updated);
-    saveState(customers, vehicles, updated);
+    saveLocalState(vehicles, updated);
     return newOS;
   };
 
@@ -362,13 +324,13 @@ export const MechanicProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
 
     setOrders(updated);
-    saveState(customers, vehicles, updated);
+    saveLocalState(vehicles, updated);
   };
 
   const deleteOS = (id: string) => {
     const updated = orders.filter((o) => o.id !== id);
     setOrders(updated);
-    saveState(customers, vehicles, updated);
+    saveLocalState(vehicles, updated);
   };
 
   return (

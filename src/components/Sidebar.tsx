@@ -97,8 +97,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         {/* Version Footer */}
         <div className="border-t border-zinc-100 pt-4 dark:border-zinc-900">
           <div className="rounded-xl bg-zinc-50 p-3.5 dark:bg-zinc-900/50">
-            <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Modo Demonstrativo</p>
-            <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">Dados salvos localmente</p>
+            <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Modo Híbrido</p>
+            <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">Clientes no Postgres · resto local</p>
           </div>
         </div>
       </aside>

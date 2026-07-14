@@ -105,7 +105,7 @@ export default function Customers() {
   };
 
   // Submit Handler
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !document || !phone) {
       alert('Por favor, preencha pelo menos Nome, CPF/CNPJ e Telefone.');
@@ -121,18 +121,25 @@ export default function Customers() {
       address,
     };
 
-    if (selectedCustomer) {
-      updateCustomer(selectedCustomer.id, data);
-    } else {
-      addCustomer(data);
+    try {
+      if (selectedCustomer) {
+        await updateCustomer(selectedCustomer.id, data);
+      } else {
+        await addCustomer(data);
+      }
+      setIsModalOpen(false);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao salvar cliente.');
     }
-
-    setIsModalOpen(false);
   };
 
-  const handleDelete = (id: string, name: string) => {
+  const handleDelete = async (id: string, name: string) => {
     if (confirm(`Tem certeza que deseja excluir o cliente "${name}"? Todos os veículos e OS associados também serão excluídos!`)) {
-      deleteCustomer(id);
+      try {
+        await deleteCustomer(id);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Erro ao excluir cliente.');
+      }
     }
   };
 
